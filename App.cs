@@ -8,7 +8,7 @@ static unsafe class App
 {
     const string HostClass = "TaskbarKeysHost", OverlayClass = "TaskbarKeysOverlay", Title = "Taskbar Keys";
     const nuint SyncTimer = 1, KeysTimer = 2;
-    const uint SyncIntervalMs = 1000, KeysIntervalMs = 100;
+    const uint SyncIntervalMs = 1000, HeldIntervalMs = 100, LingerIntervalMs = 30;
     const uint TrayMessage = WM_APP + 1;
     const uint NIN_SELECT = 0x400, NIN_KEYSELECT = 0x401;
     const nuint PauseCommand = 1, StartupCommand = 2, ExitCommand = 3;
@@ -19,7 +19,8 @@ static unsafe class App
     static KeyTracker _keys = null!;
     static TrayIcon _tray = null!;
     static string _startupCommand = "";
-    static bool _keysTimerRunning, _paused, _lightTheme;
+    static uint _keysTimerInterval;
+    static bool _paused, _lightTheme;
 
     static int Main(string[] args)
     {
@@ -110,7 +111,7 @@ static unsafe class App
                 return 0;
             case WM_TIMER when wParam == (nint)KeysTimer:
                 if (_keys.OnTimer(Environment.TickCount64))
-                    _overlay.Show(_keys.Shown);
+                    _overlay.Show(_keys.Labels);
                 UpdateKeysTimer();
                 return 0;
             case TrayMessage:
@@ -177,7 +178,7 @@ static unsafe class App
         if (paused)
         {
             _keys.Clear();
-            _overlay.Show(_keys.Shown);
+            _overlay.Show(_keys.Labels);
             UpdateKeysTimer();
         }
 
@@ -216,19 +217,21 @@ static unsafe class App
 
         var vk = KeyNames.Normalize(keyboard.VKey);
         if (_keys.OnKey(vk, keyboard.MakeCode, extended, up, Environment.TickCount64))
-            _overlay.Show(_keys.Shown);
+            _overlay.Show(_keys.Labels);
         UpdateKeysTimer();
     }
 
+    /// <summary> Slow while keys are only held (stale-key checks), fast while lingering so the fade-out is smooth. </summary>
     static void UpdateKeysTimer()
     {
-        if (_keys.NeedsTimer == _keysTimerRunning)
+        var interval = !_keys.NeedsTimer ? 0 : _keys.Lingering ? LingerIntervalMs : HeldIntervalMs;
+        if (interval == _keysTimerInterval)
             return;
-        _keysTimerRunning = _keys.NeedsTimer;
-        if (_keysTimerRunning)
-            SetTimer(_host, KeysTimer, KeysIntervalMs, 0);
-        else
+        _keysTimerInterval = interval;
+        if (interval == 0)
             KillTimer(_host, KeysTimer);
+        else
+            SetTimer(_host, KeysTimer, interval, 0);
     }
 }
 

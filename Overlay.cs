@@ -6,16 +6,16 @@ namespace TaskbarKeys;
 sealed unsafe class Overlay(nint instance, string windowClass, int widthDip, int gapDip) : IDisposable
 {
     const int FontSizeDip = 14, PillHeightDip = 26, PillPaddingDip = 7, PillGapDip = 4;
-    const float PillRadiusDip = 5;
+    const float PillRadiusDip = 5, ReleasedTextOpacity = 0.45f;
 
     nint _taskbar, _hwnd, _dc, _bitmap, _font;
     uint* _bits;
     int _x, _y, _width, _height, _bitmapWidth, _bitmapHeight;
     uint _dpi;
     bool _light;
-    IReadOnlyList<string> _labels = [];
+    IReadOnlyList<KeyLabel> _labels = [];
 
-    public void Show(IReadOnlyList<string> labels)
+    public void Show(IReadOnlyList<KeyLabel> labels)
     {
         _labels = labels;
         Render();
@@ -112,7 +112,7 @@ sealed unsafe class Overlay(nint instance, string windowClass, int widthDip, int
 
         var pills = LayoutPills();
         foreach (var pill in pills)
-            TextOutW(_dc, pill.TextX, pill.TextY, pill.Label, pill.Label.Length);
+            TextOutW(_dc, pill.TextX, pill.TextY, pill.Label.Name, pill.Label.Name.Length);
         GdiFlush();
 
         foreach (var pill in pills)
@@ -124,7 +124,7 @@ sealed unsafe class Overlay(nint instance, string windowClass, int widthDip, int
         UpdateLayeredWindow(_hwnd, 0, null, &size, _dc, &source, 0, &blend, 2 /* ULW_ALPHA */);
     }
 
-    readonly record struct Pill(string Label, int X, int Y, int Width, int Height, int TextX, int TextY);
+    readonly record struct Pill(KeyLabel Label, int X, int Y, int Width, int Height, int TextX, int TextY);
 
     List<Pill> LayoutPills()
     {
@@ -133,7 +133,7 @@ sealed unsafe class Overlay(nint instance, string windowClass, int widthDip, int
         var sizes = _labels.Select(label =>
         {
             SIZE text;
-            GetTextExtentPoint32W(_dc, label, label.Length, &text);
+            GetTextExtentPoint32W(_dc, label.Name, label.Name.Length, &text);
             return text;
         }).ToList();
 
@@ -149,31 +149,43 @@ sealed unsafe class Overlay(nint instance, string windowClass, int widthDip, int
         return pills;
     }
 
-    /// <summary> GDI's white-on-black text → premultiplied ARGB over an antialiased rounded rect. </summary>
+    /// <summary>
+    /// GDI's white-on-black text → premultiplied ARGB over an antialiased rounded rect: filled for held keys, outlined and dimmed for
+    /// released ones.
+    /// </summary>
     void ComposePill(Span<uint> pixels, Pill pill)
     {
         var (textR, textG, textB) = _light ? (0x1B, 0x1B, 0x1B) : (0xFF, 0xFF, 0xFF);
-        var (fillR, fillG, fillB, fillAlpha) = _light ? (0, 0, 0, 0.08f) : (0xFF, 0xFF, 0xFF, 0.14f);
+        var (shapeR, shapeG, shapeB) = _light ? (0, 0, 0) : (0xFF, 0xFF, 0xFF);
+        var held = pill.Label.Held;
+        var textOpacity = held ? 1 : ReleasedTextOpacity * pill.Label.Opacity;
+        var shapeOpacity = held ? (_light ? 0.08f : 0.14f) : (_light ? 0.25f : 0.3f) * pill.Label.Opacity;
         var radius = PillRadiusDip * _dpi / 96f;
+        var stroke = MathF.Max(1, _dpi / 96f);
+        float left = pill.X, top = pill.Y, right = pill.X + pill.Width, bottom = pill.Y + pill.Height;
 
         for (var y = Math.Max(pill.Y, 0); y < Math.Min(pill.Y + pill.Height, _height); y++)
         for (var x = Math.Max(pill.X, 0); x < Math.Min(pill.X + pill.Width, _width); x++)
         {
             ref var pixel = ref pixels[y * _width + x];
-            var textAlpha = (pixel & 0xFF) / 255f;
-            var fill = RoundedRectCoverage(x + 0.5f, y + 0.5f, pill, radius) * fillAlpha * (1 - textAlpha);
-            var alpha = textAlpha + fill;
-            pixel = (uint)(alpha * 255 + 0.5f) << 24
-                | (uint)(textR * textAlpha + fillR * fill + 0.5f) << 16
-                | (uint)(textG * textAlpha + fillG * fill + 0.5f) << 8
-                | (uint)(textB * textAlpha + fillB * fill + 0.5f);
+            float px = x + 0.5f, py = y + 0.5f;
+            var coverage = RoundedRectCoverage(px, py, left, top, right, bottom, radius);
+            if (!held)
+                coverage -= RoundedRectCoverage(px, py, left + stroke, top + stroke, right - stroke, bottom - stroke, radius - stroke);
+
+            var textAlpha = (pixel & 0xFF) / 255f * textOpacity;
+            var shape = coverage * shapeOpacity * (1 - textAlpha);
+            pixel = (uint)((textAlpha + shape) * 255 + 0.5f) << 24
+                | (uint)(textR * textAlpha + shapeR * shape + 0.5f) << 16
+                | (uint)(textG * textAlpha + shapeG * shape + 0.5f) << 8
+                | (uint)(textB * textAlpha + shapeB * shape + 0.5f);
         }
     }
 
-    static float RoundedRectCoverage(float x, float y, Pill pill, float radius)
+    static float RoundedRectCoverage(float x, float y, float left, float top, float right, float bottom, float radius)
     {
-        var cx = Math.Clamp(x, pill.X + radius, pill.X + pill.Width - radius);
-        var cy = Math.Clamp(y, pill.Y + radius, pill.Y + pill.Height - radius);
+        var cx = Math.Clamp(x, left + radius, right - radius);
+        var cy = Math.Clamp(y, top + radius, bottom - radius);
         var distance = MathF.Sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy)) - radius;
         return Math.Clamp(0.5f - distance, 0, 1);
     }
