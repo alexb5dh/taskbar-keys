@@ -2,7 +2,11 @@
 
 Shows the keys you are pressing, modifiers included, in the Windows 11 taskbar next to the tray.
 
+![Ctrl+Shift+K: pressed, released, fading out](docs/keys.gif)
+
 - Held keys are filled; released keys turn outlined and dim, then fade out after 1.5 s.
+
+  ![Ctrl and Shift held, K released](docs/keys.png)
 - Follows the light/dark taskbar theme and DPI; hides together with the taskbar (fullscreen apps, auto-hide).
 - Reads keys through a raw input sink, not a keyboard hook, so it never delays input. No CPU use while idle.
 - Tray icon menu: **Pause**, **Start with Windows**, **Exit**.
