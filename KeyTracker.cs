@@ -5,11 +5,9 @@ readonly record struct KeyLabel(string Name, bool Held, float Opacity);
 /// <summary> Held keys and labels to show; released keys linger dimmed, then fade out. </summary>
 sealed class KeyTracker(int lingerMs)
 {
-    // Missed key-ups (Win+L, UAC) leave keys stuck; keys held longer than this are rechecked.
-    const int StaleCheckDelayMs = 300;
     const int FadeMs = 300;
 
-    readonly record struct Key(ushort Vk, string Name, long DownAt);
+    readonly record struct Key(ushort Vk, string Name, bool ReportedDown);
 
     readonly List<Key> _held = [];
     List<Key> _shown = [];
@@ -38,7 +36,7 @@ sealed class KeyTracker(int lingerMs)
         if (index >= 0)
             return false;
 
-        _held.Add(new Key(vk, KeyNames.Get(vk, makeCode, extended), now));
+        _held.Add(new Key(vk, KeyNames.Get(vk, makeCode, extended), ReportedDown: false));
         _shown = Ordered(_held);
         _lingerEndsAt = 0;
         return UpdateLabels(now);
@@ -47,7 +45,7 @@ sealed class KeyTracker(int lingerMs)
     /// <returns> Whether <see cref="Labels"/> changed. </returns>
     public bool OnTimer(long now)
     {
-        if (_held.RemoveAll(k => now - k.DownAt > StaleCheckDelayMs && !KeyNames.IsDown(k.Vk)) > 0 && !Lingering)
+        if (DropMissedReleases() && !Lingering)
             _lingerEndsAt = now + lingerMs;
 
         if (Lingering && now >= _lingerEndsAt)
@@ -57,6 +55,29 @@ sealed class KeyTracker(int lingerMs)
         }
 
         return UpdateLabels(now);
+    }
+
+    /// <summary>
+    /// Missed key-ups (UAC prompt) would leave keys stuck. Only keys Windows has reported down are dropped: a key another app's hook
+    /// swallows never is.
+    /// </summary>
+    bool DropMissedReleases()
+    {
+        var dropped = false;
+        for (var i = _held.Count - 1; i >= 0; i--)
+        {
+            if (KeyNames.IsDown(_held[i].Vk))
+            {
+                _held[i] = _held[i] with { ReportedDown = true };
+            }
+            else if (_held[i].ReportedDown)
+            {
+                _held.RemoveAt(i);
+                dropped = true;
+            }
+        }
+
+        return dropped;
     }
 
     public void Clear()

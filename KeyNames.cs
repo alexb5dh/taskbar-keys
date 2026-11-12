@@ -2,11 +2,11 @@ namespace TaskbarKeys;
 
 static class KeyNames
 {
-    public const ushort Shift = 0x10, Control = 0x11, Alt = 0x12, LeftWin = 0x5B, RightWin = 0x5C;
+    public const ushort Shift = 0x10, Control = 0x11, Alt = 0x12, LeftWin = 0x5B, RightWin = 0x5C, LeftShift = 0xA0;
 
     public static ushort Normalize(ushort vk) => vk switch
     {
-        0xA0 or 0xA1 => Shift,
+        LeftShift or 0xA1 => Shift,
         0xA2 or 0xA3 => Control,
         0xA4 or 0xA5 => Alt,
         RightWin => LeftWin,

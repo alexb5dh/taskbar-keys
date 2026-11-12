@@ -61,6 +61,12 @@ struct BITMAPINFOHEADER
 
 struct BLENDFUNCTION { public byte BlendOp, BlendFlags, SourceConstantAlpha, AlphaFormat; }
 
+struct KBDLLHOOKSTRUCT
+{
+    public uint VkCode, ScanCode, Flags, Time;
+    public nuint ExtraInfo;
+}
+
 struct ICONINFO
 {
     public int IsIcon;
@@ -86,10 +92,11 @@ unsafe struct NOTIFYICONDATAW
 
 static unsafe partial class Native
 {
-    const string User = "user32.dll", Gdi = "gdi32.dll", Kernel = "kernel32.dll", AdvApi = "advapi32.dll", Shell = "shell32.dll";
+    const string User = "user32.dll", Gdi = "gdi32.dll", Kernel = "kernel32.dll", AdvApi = "advapi32.dll", Shell = "shell32.dll",
+        Wts = "wtsapi32.dll";
 
     public const uint WM_NULL = 0x0000, WM_DESTROY = 0x0002, WM_CLOSE = 0x0010, WM_SETTINGCHANGE = 0x001A, WM_CONTEXTMENU = 0x007B,
-        WM_NCHITTEST = 0x0084, WM_INPUT = 0x00FF, WM_TIMER = 0x0113, WM_APP = 0x8000;
+        WM_NCHITTEST = 0x0084, WM_INPUT = 0x00FF, WM_TIMER = 0x0113, WM_WTSSESSION_CHANGE = 0x02B1, WM_APP = 0x8000;
     public const uint WS_POPUP = 0x80000000, WS_CHILD = 0x40000000, WS_VISIBLE = 0x10000000, WS_CLIPSIBLINGS = 0x04000000;
     public const uint WS_EX_TRANSPARENT = 0x20, WS_EX_TOOLWINDOW = 0x80, WS_EX_LAYERED = 0x80000, WS_EX_NOACTIVATE = 0x08000000;
     public const uint SWP_NOSIZE = 0x1, SWP_NOMOVE = 0x2, SWP_NOACTIVATE = 0x10;
@@ -171,6 +178,13 @@ static unsafe partial class Native
     [LibraryImport(User)] public static partial int TrackPopupMenuEx(nint menu, uint flags, int x, int y, nint hwnd, nint parameters);
     [LibraryImport(User)] public static partial int DestroyMenu(nint menu);
     [LibraryImport(User)] public static partial int SetForegroundWindow(nint hwnd);
+
+    [LibraryImport(User)]
+    public static partial nint SetWindowsHookExW(int hookId, delegate* unmanaged<int, nint, nint, nint> proc, nint module, uint threadId);
+
+    [LibraryImport(User)] public static partial int UnhookWindowsHookEx(nint hook);
+    [LibraryImport(User)] public static partial nint CallNextHookEx(nint hook, int code, nint wParam, nint lParam);
+    [LibraryImport(Wts)] public static partial int WTSRegisterSessionNotification(nint hwnd, uint flags);
 
     [LibraryImport(Shell)] public static partial int Shell_NotifyIconW(uint message, NOTIFYICONDATAW* data);
 

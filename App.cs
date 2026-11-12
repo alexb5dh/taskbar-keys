@@ -9,18 +9,19 @@ static unsafe class App
     const string HostClass = "TaskbarKeysHost", OverlayClass = "TaskbarKeysOverlay", Title = "Taskbar Keys";
     const nuint SyncTimer = 1, KeysTimer = 2;
     const uint SyncIntervalMs = 1000, HeldIntervalMs = 100, LingerIntervalMs = 30;
-    const uint TrayMessage = WM_APP + 1;
+    const uint TrayMessage = WM_APP + 1, KeyMessage = WM_APP + 2;
+    const uint WTS_SESSION_LOCK = 7, WTS_SESSION_UNLOCK = 8;
     const uint NIN_SELECT = 0x400, NIN_KEYSELECT = 0x401;
     const nuint PauseCommand = 1, StartupCommand = 2, ExitCommand = 3;
 
-    static nint _host;
+    static nint _host, _instance, _hook;
     static uint _taskbarCreatedMessage;
     static Overlay _overlay = null!;
     static KeyTracker _keys = null!;
     static TrayIcon _tray = null!;
     static string _startupCommand = "";
     static uint _keysTimerInterval;
-    static bool _paused, _lightTheme;
+    static bool _useHook, _paused, _lightTheme;
 
     static int Main(string[] args)
     {
@@ -38,7 +39,8 @@ static unsafe class App
             return 0;
 
         _startupCommand = string.Join(" ", new[] { Environment.ProcessPath! }.Concat(args).Select(a => $"\"{a}\""));
-        var instance = GetModuleHandleW(0);
+        _useHook = options.Hook;
+        var instance = _instance = GetModuleHandleW(0);
         RegisterWindowClass(HostClass, instance);
         RegisterWindowClass(OverlayClass, instance);
         _taskbarCreatedMessage = RegisterWindowMessageW("TaskbarCreated");
@@ -48,10 +50,11 @@ static unsafe class App
         _overlay = new Overlay(instance, OverlayClass, options.WidthDip, options.GapDip);
         _overlay.SetLightTheme(_lightTheme);
 
-        // Hidden top-level window: raw input, tray callbacks, broadcasts.
+        // Hidden top-level window: key input, tray callbacks, broadcasts.
         _host = CreateWindowExW(WS_EX_TOOLWINDOW, HostClass, Title, WS_POPUP, 0, 0, 0, 0, 0, 0, instance, 0);
         _tray = new TrayIcon(_host, TrayMessage);
-        RegisterKeyboard(enable: true);
+        WTSRegisterSessionNotification(_host, 0 /* NOTIFY_FOR_THIS_SESSION */);
+        SetInputEnabled(true);
         _overlay.Sync();
         UpdateTray();
         SetTimer(_host, SyncTimer, SyncIntervalMs, 0);
@@ -82,8 +85,25 @@ static unsafe class App
         }
     }
 
+    static void SetInputEnabled(bool enabled)
+    {
+        if (!_useHook)
+        {
+            RegisterRawInput(enabled);
+        }
+        else if (enabled)
+        {
+            _hook = SetWindowsHookExW(13 /* WH_KEYBOARD_LL */, &KeyboardHook, _instance, 0);
+        }
+        else if (_hook != 0)
+        {
+            UnhookWindowsHookEx(_hook);
+            _hook = 0;
+        }
+    }
+
     /// <summary> Raw input sink: gets async copies of key events, so unlike a low-level hook it never delays input. </summary>
-    static void RegisterKeyboard(bool enable)
+    static void RegisterRawInput(bool enable)
     {
         var device = new RAWINPUTDEVICE
         {
@@ -93,6 +113,19 @@ static unsafe class App
             Target = enable ? _host : 0,
         };
         RegisterRawInputDevices(&device, 1, (uint)sizeof(RAWINPUTDEVICE));
+    }
+
+    /// <summary>
+    /// The newest hook runs first, so this sees keys that hooks installed earlier swallow (PowerToys holds Win back).
+    /// Only posts the key to stay fast; injected keys are skipped so remaps and replays don't show twice.
+    /// </summary>
+    [UnmanagedCallersOnly]
+    static nint KeyboardHook(int code, nint wParam, nint lParam)
+    {
+        var key = (KBDLLHOOKSTRUCT*)lParam;
+        if (code >= 0 && (key->Flags & 0x10 /* LLKHF_INJECTED */) == 0)
+            PostMessageW(_host, KeyMessage, (nint)(key->VkCode | key->ScanCode << 16), (nint)key->Flags);
+        return CallNextHookEx(0, code, wParam, lParam);
     }
 
     [UnmanagedCallersOnly]
@@ -106,6 +139,13 @@ static unsafe class App
             case WM_INPUT:
                 OnRawInput(lParam);
                 break;
+            case KeyMessage:
+                OnKey((ushort)(wParam & 0xFFFF), (ushort)(wParam >> 16), extended: (lParam & 0x1) != 0, up: (lParam & 0x80) != 0);
+                return 0;
+            // Win+L: the Win key-up happens on the lock screen, out of reach.
+            case WM_WTSSESSION_CHANGE when (uint)wParam is WTS_SESSION_LOCK or WTS_SESSION_UNLOCK:
+                ClearKeys();
+                return 0;
             case WM_TIMER when wParam == (nint)SyncTimer:
                 _overlay.Sync();
                 return 0;
@@ -174,15 +214,17 @@ static unsafe class App
     static void SetPaused(bool paused)
     {
         _paused = paused;
-        RegisterKeyboard(enable: !paused);
+        SetInputEnabled(!paused);
         if (paused)
-        {
-            _keys.Clear();
-            _overlay.Show(_keys.Labels);
-            UpdateKeysTimer();
-        }
-
+            ClearKeys();
         UpdateTray();
+    }
+
+    static void ClearKeys()
+    {
+        _keys.Clear();
+        _overlay.Show(_keys.Labels);
+        UpdateKeysTimer();
     }
 
     static void OnSettingChange()
@@ -208,15 +250,16 @@ static unsafe class App
             return;
 
         var keyboard = Unsafe.Read<RAWKEYBOARD>(buffer + sizeof(RAWINPUTHEADER));
-        var up = (keyboard.Flags & 0x1) != 0;
-        var extended = (keyboard.Flags & 0x2) != 0;
+        OnKey(keyboard.VKey, keyboard.MakeCode, extended: (keyboard.Flags & 0x2) != 0, up: (keyboard.Flags & 0x1) != 0);
+    }
 
+    static void OnKey(ushort vk, ushort makeCode, bool extended, bool up)
+    {
         // 0xFF: fake key (Pause, media keys); E0 Shift: fake Shift around numpad navigation keys.
-        if (keyboard.VKey is 0 or 0xFF || keyboard.VKey == KeyNames.Shift && extended)
+        if (vk is 0 or 0xFF || (vk is KeyNames.Shift or KeyNames.LeftShift && extended))
             return;
 
-        var vk = KeyNames.Normalize(keyboard.VKey);
-        if (_keys.OnKey(vk, keyboard.MakeCode, extended, up, Environment.TickCount64))
+        if (_keys.OnKey(KeyNames.Normalize(vk), makeCode, extended, up, Environment.TickCount64))
             _overlay.Show(_keys.Labels);
         UpdateKeysTimer();
     }
@@ -235,7 +278,7 @@ static unsafe class App
     }
 }
 
-sealed record Options(int WidthDip = 300, int GapDip = 8, int LingerMs = 1500, bool Exit = false)
+sealed record Options(int WidthDip = 300, int GapDip = 8, int LingerMs = 1500, bool Hook = false, bool Exit = false)
 {
     public static Options Parse(string[] args)
     {
@@ -249,6 +292,7 @@ sealed record Options(int WidthDip = 300, int GapDip = 8, int LingerMs = 1500, b
                 "--width" => options with { WidthDip = Next() },
                 "--gap" => options with { GapDip = Next() },
                 "--linger" => options with { LingerMs = Next() },
+                "--hook" => options with { Hook = true },
                 "--exit" => options with { Exit = true },
                 _ => throw new ArgumentException($"Unknown argument: {args[i]}"),
             };
