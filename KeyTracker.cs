@@ -57,10 +57,7 @@ sealed class KeyTracker(int lingerMs)
         return UpdateLabels(now);
     }
 
-    /// <summary>
-    /// Missed key-ups (UAC prompt) would leave keys stuck. Only keys Windows has reported down are dropped: a key another app's hook
-    /// swallows never is.
-    /// </summary>
+    /// <summary> Drops keys with a missed key-up, if Windows ever reported them down (swallowed keys never are). </summary>
     bool DropMissedReleases()
     {
         var dropped = false;

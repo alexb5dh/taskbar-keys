@@ -129,10 +129,7 @@ static unsafe class App
         RegisterRawInputDevices(&device, 1, (uint)sizeof(RAWINPUTDEVICE));
     }
 
-    /// <summary>
-    /// The newest hook runs first, so this sees keys that hooks installed earlier swallow (PowerToys holds Win back).
-    /// Only posts the key to stay fast; injected keys are skipped so remaps and replays don't show twice.
-    /// </summary>
+    /// <summary> Runs before older hooks that swallow keys (PowerToys); skips injected keys so remaps don't show twice. </summary>
     [UnmanagedCallersOnly]
     static nint KeyboardHook(int code, nint wParam, nint lParam)
     {
@@ -156,7 +153,7 @@ static unsafe class App
             case KeyMessage:
                 OnKey((ushort)(wParam & 0xFFFF), (ushort)(wParam >> 16), extended: (lParam & 0x1) != 0, up: (lParam & 0x80) != 0);
                 return 0;
-            // Win+L: the Win key-up happens on the lock screen, out of reach.
+            // Win+L: Win's key-up is never seen.
             case WM_WTSSESSION_CHANGE when (uint)wParam is WTS_SESSION_LOCK or WTS_SESSION_UNLOCK:
                 ClearKeys();
                 return 0;
