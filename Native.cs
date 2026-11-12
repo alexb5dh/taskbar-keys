@@ -192,6 +192,7 @@ static unsafe partial class Native
     public static partial nint CreateMutexW(nint attributes, int initialOwner, string name);
 
     [LibraryImport(Kernel)] public static partial nint GetModuleHandleW(nint moduleName);
+    [LibraryImport(Kernel)] public static partial int CloseHandle(nint handle);
 
     [LibraryImport(AdvApi, StringMarshalling = StringMarshalling.Utf16)]
     public static partial int RegGetValueW(nint key, string subKey, string value, uint flags, uint* type, void* data, uint* size);

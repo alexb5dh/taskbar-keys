@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using static TaskbarKeys.Native;
@@ -12,16 +13,17 @@ static unsafe class App
     const uint TrayMessage = WM_APP + 1, KeyMessage = WM_APP + 2;
     const uint WTS_SESSION_LOCK = 7, WTS_SESSION_UNLOCK = 8;
     const uint NIN_SELECT = 0x400, NIN_KEYSELECT = 0x401;
-    const nuint PauseCommand = 1, StartupCommand = 2, ExitCommand = 3;
+    const nuint PauseCommand = 1, StartupCommand = 2, RestartCommand = 3, ExitCommand = 4;
 
-    static nint _host, _instance, _hook;
+    static nint _host, _instance, _hook, _mutex;
+    static string[] _args = [];
     static uint _taskbarCreatedMessage;
     static Overlay _overlay = null!;
     static KeyTracker _keys = null!;
     static TrayIcon _tray = null!;
     static string _startupCommand = "";
     static uint _keysTimerInterval;
-    static bool _useHook, _paused, _lightTheme;
+    static bool _useHook, _paused, _lightTheme, _restart;
 
     static int Main(string[] args)
     {
@@ -34,10 +36,11 @@ static unsafe class App
             return 0;
         }
 
-        CreateMutexW(0, 0, @"Local\TaskbarKeys");
+        _mutex = CreateMutexW(0, 0, @"Local\TaskbarKeys");
         if (Marshal.GetLastPInvokeError() == 183 /* ERROR_ALREADY_EXISTS */)
             return 0;
 
+        _args = args;
         _startupCommand = string.Join(" ", new[] { Environment.ProcessPath! }.Concat(args).Select(a => $"\"{a}\""));
         _useHook = options.Hook;
         var instance = _instance = GetModuleHandleW(0);
@@ -67,7 +70,18 @@ static unsafe class App
         }
 
         _overlay.Dispose();
+        if (_restart)
+            StartNewInstance();
         return 0;
+    }
+
+    static void StartNewInstance()
+    {
+        CloseHandle(_mutex);
+        var startInfo = new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false };
+        foreach (var arg in _args)
+            startInfo.ArgumentList.Add(arg);
+        Process.Start(startInfo);
     }
 
     static void RegisterWindowClass(string name, nint instance)
@@ -189,6 +203,7 @@ static unsafe class App
         AppendMenuW(menu, _paused ? MF_CHECKED : 0, PauseCommand, "Pause");
         AppendMenuW(menu, Settings.RunsAtStartup() ? MF_CHECKED : 0, StartupCommand, "Start with Windows");
         AppendMenuW(menu, MF_SEPARATOR, 0, null);
+        AppendMenuW(menu, 0, RestartCommand, "Restart");
         AppendMenuW(menu, 0, ExitCommand, "Exit");
 
         // Otherwise the menu doesn't close on outside clicks.
@@ -204,6 +219,10 @@ static unsafe class App
                 break;
             case StartupCommand:
                 Settings.SetRunAtStartup(!Settings.RunsAtStartup(), _startupCommand);
+                break;
+            case RestartCommand:
+                _restart = true;
+                DestroyWindow(_host);
                 break;
             case ExitCommand:
                 DestroyWindow(_host);
