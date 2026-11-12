@@ -26,12 +26,19 @@ taskbar-keys.exe --exit
 
 ### `--hook`
 
-Raw input only sees keys after every other app's keyboard hook has passed them on. Remapping tools such as PowerToys Keyboard
-Manager hold some keys back: with Win shortcuts remapped, Win only shows up as a short tap on release. A hook installed later
-runs first, so `--hook` sees the physical key while it is held. It shows physical keys only, not ones other apps send.
+By default taskbar-keys reads raw input, which only sees keys after every other app's keyboard hook has passed them on.
+Remapping tools such as PowerToys hold some keys back: with Win shortcuts remapped, Win only shows up as a short tap on release.
+`--hook` installs a low-level keyboard hook instead. Windows calls the newest hook first, so it sees keys before those tools do.
 
-The cost: every key event waits for the hook. It only posts a message, so the delay is microseconds, but it is no longer zero.
-If the other tool restarts after taskbar-keys, its hook runs first again; restart taskbar-keys.
+Pros:
+- Keys held back by remapping tools show while they are held.
+- Shows the physical keys you press, not the keys remaps and macros send.
+
+Cons:
+- Every key event waits for the hook. It only posts a message, so the delay is microseconds, but no longer zero.
+- If taskbar-keys hangs, typing lags until Windows gives up on the hook.
+- If the other tool restarts after taskbar-keys, its hook runs first again. Use **Restart** in the tray menu.
+- Keys sent by other apps (on-screen keyboard, remote tools, macros) are not shown.
 
 ## Build
 
